@@ -3,28 +3,34 @@ dynamic_sampler <- nimbleFunction(
   setup = function(model, mvSaved, target, control) {
     ## checagens de controle
     names <- model$expandNodeNames(target)
-    n_regions <- as.integer(control$n_regions)[1]
-    n_times   <- as.integer(control$n_times)[1]
-    dbeta     <- as.integer(control$dbeta)[1]
-    w         <- control$w
+    n_regions <- as.integer(constants$n_regions)[1]
+    n_times   <- as.integer(constants$n_times)[1]
+    dbeta     <- as.integer(constants$dbeta)[1]
+    w         <- constants$w
     a0        <- constants$a0
     b0        <- constants$b0
     ## buffers 2D via nimMatrix
-    
+    att_buf <- nimMatrix(init = 0, nrow = n_regions, ncol = n_times)
+    btt_buf <- nimMatrix(init = 0, nrow = n_regions, ncol = n_times)
+    at_buf  <- nimMatrix(init = 0, nrow = n_regions, ncol = n_times + 1)
+    bt_buf  <- nimMatrix(init = 0, nrow = n_regions, ncol = n_times + 1)
     ## nós dependentes do target
     calcNodes <- model$getDependencies(target)
     ## tudo que o run() precisa tem que ser devolvido aqui
     setupOutputs(
-      names = names
+      names = names,
       n_regions = n_regions,
       n_times   = n_times,
       dbeta     = dbeta,
       w         = w,
       a0        = a0,
       b0        = b0,
+      att_buf   = att_buf,
+        btt_buf   = btt_buf,
+        at_buf    = at_buf,
+        bt_buf    = bt_buf,
       calcNodes = calcNodes
-      
-    )
+      )
   },
   run = function() {
     declare(i,  integer(0))
