@@ -1,0 +1,59 @@
+--- sampler_anteriores/dynamic_sampler_v11.R	2025-09-18 14:32:26.784381000 -0300
++++ dynamic_sampler.R	2025-09-17 14:35:11.340805100 -0300
+@@ -2,12 +2,7 @@
+   contains = sampler_BASE,
+   setup = function(model, mvSaved, target, control) {
+     ## checagens de controle
+-    if(is.null(control$n_regions)) stop("n_regions não definido no controle")
+-    if(is.null(control$n_times))   stop("n_times não definido no controle")
+-    if(is.null(control$dbeta))     stop("dbeta não definido no controle")
+-    if(is.null(control$w))         stop("w não definido no controle")
+-    if(is.null(control$a0))        stop("a0 não definido no controle")
+-    if(is.null(control$b0))        stop("b0 não definido no controle")
++    names <- model$expandNodeNames(target)
+     n_regions <- as.integer(control$n_regions)[1]
+     n_times   <- as.integer(control$n_times)[1]
+     dbeta     <- as.integer(control$dbeta)[1]
+@@ -15,26 +10,19 @@
+     a0        <- constants$a0
+     b0        <- constants$b0
+     ## buffers 2D via nimMatrix
+-    att_buf <- nimMatrix(init = 0, nrow = n_regions, ncol = n_times)
+-    btt_buf <- nimMatrix(init = 0, nrow = n_regions, ncol = n_times)
+-    at_buf  <- nimMatrix(init = 0, nrow = n_regions, ncol = n_times + 1)
+-    bt_buf  <- nimMatrix(init = 0, nrow = n_regions, ncol = n_times + 1)
++    
+     ## nós dependentes do target
+     calcNodes <- model$getDependencies(target)
+     ## tudo que o run() precisa tem que ser devolvido aqui
+     setupOutputs(
+-      
+-        n_regions = n_regions,
+-        n_times   = n_times,
+-        dbeta     = dbeta,
+-        w         = w,
+-        a0        = a0,
+-        b0        = b0,
+-        att_buf   = att_buf,
+-        btt_buf   = btt_buf,
+-        at_buf    = at_buf,
+-        bt_buf    = bt_buf,
+-        calcNodes = calcNodes
++      names = names
++      n_regions = n_regions,
++      n_times   = n_times,
++      dbeta     = dbeta,
++      w         = w,
++      a0        = a0,
++      b0        = b0,
++      calcNodes = calcNodes
+       
+     )
+   },
+@@ -79,4 +67,4 @@
+   methods = list(
+     reset = function() {}
+   )
+-)
++)
+\ No newline at end of file
