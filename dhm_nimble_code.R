@@ -1,124 +1,377 @@
-if(!require(dplyr)){ install.packages("dplyr"); require(dplyr)}   
-if(!require(maps)){ install.packages("maps"); require(maps)}   # For adding a map to the plots of Brazil
-if(!require(NbClust)){ install.packages("NbClust"); require(NbClust)}   
-if(!require(ppclust)){ install.packages("ppclust"); require(ppclust)}   
-if(!require(psych)){ install.packages("psych"); require(psych)}   
-if(!require(nimble)){ install.packages("nimble"); require(nimble)} # For MCMC computation using NIMBLE.  
-if(!require(spdep)){ install.packages("spdep"); require(spdep)}   # For computing the neighbourhood and adjancency objects.
-if(!require(coda)){ install.packages("coda"); require(coda)}   
-if(!require(viridis)){ install.packages("viridis"); require(viridis)}  # Colour pallette for plots. 
-if(!require(ggplot2)){ install.packages("ggplot2"); require(ggplot2)}   
-
-
-# Define the model
 code <- nimbleCode({
-  # Likelihood section
-  for (t in 1:n_times) {  # Loop over time
-    for (i in 1:n_regions) {  # Loop over regions
-      # Calculation of epsilon (effect of covariates)
-      epsilon[i, t] <- 1 - inprod(hAI[i, ], gamma[1:K, t])  # Inverse of the influence of gamma
-      # Poisson likelihood
-      Y[i, t] ~ dpois(mu[i, t])  # Observed counts Y for region i at time t
-      
-      # Mean of the Poisson distribution
-      mu[i, t] <- lambda[i, t] * E[i, t] * epsilon[i, t] * theta[i, t]
-      
-      # Calculation of theta (exponential transformation of covariates)
-      theta[i, t] <- exp(inprod(beta[1:n_covariates_theta], x[i, t, 1:n_covariates_theta]))
-      
-      # Prior for lambda using a Gamma distribution
-      lambda[i, t] ~ dgamma(a0, 1/b0)
-      
-      # Terms for Poisson likelihood calculations
-      #ppoi.term[i,t] <- exp(-mu[i, t] + Y[i, t] * log(mu[i, t] - lfactorial(Y[i, t])))
-      #cpoi.term[i,t] <- 1 / ppoi.term[i,t]  # Cumulative Poisson term
-    }
-    
-    # Prior for the first gamma parameter
-    gamma[1, t] ~ dunif(min = a_unif[1], max = b_unif[1])
-    
-    # Priors for subsequent gamma parameters
-    for (j in 2:K) {
-      gamma[j, t] ~ dunif(min = a_unif[j] * (1 - sum(gamma[1:(j - 1), t])),
-                          max = b_unif[j] * (1 - sum(gamma[1:(j - 1), t])))
-    }
+  # Priors para coeficientes de regressão
+  for (j in 1:p) {
+    beta[j] ~ dnorm(mu_beta[j], sd = 5)
   }
   
-  # Priors for beta coefficients
-  for (l in 1:n_covariates_theta) {
-    beta[l] ~ dnorm(mu_beta[l], sd_beta)  # Normal prior for each beta
+  # Priors para parâmetros de subnotificação
+  gamma[1] ~ dunif(a_unif[1], b_unif[1])
+  for (j in 2:K) {
+    gamma[j] ~ dunif(
+      min = a_unif[j] * (1 - sum(gamma[1:(j - 1)])),
+      max = b_unif[j] * (1 - sum(gamma[1:(j - 1)]))
+    )
   }
-})
+  
+  # Estrutura para probabilidade de notificação
+  for (i in 1:n_regions) {
+    epsilon[i] <- 1 - sum(h[i, 1:K] * gamma[1:K])
+  }
+  
+  # Modelo para estados latentes e observações
+  for (i in 1:n_regions) {
+    # Inicialização do processo dinâmico
+    log_theta[i, 1] <- log(lambda[i, 1]) + inprod(beta[1:p], x[i, 1, 1:p])
+    theta[i, 1] <- exp(log_theta[i, 1])
+    
+    # Equação de observação
+    mu[i,1] <- E[i, 1] * epsilon[i] * theta[i, 1]
+    Y[i, 1] ~ dpois(mu[i,1])
+    
+    # Inicialização dos parâmetros de filtragem
+    at[i, 1] <- a0 
+    
+    bt[i, 1] <- b0 
+    
+    # Evolução temporal
+    for (t in 2:(n_times+1)) {
+      # Atualização dos parâmetros
+      att[i,t-1] <- w*at[i,t-1]
+      btt[i,t-1] <- w*bt[i,t-1]
+      at[i, t] <- att[i, t-1] + count[i, t-1]
+      bt[i, t] <- btt[i, t-1] + E[i, t-1] * epsilon[i] * exp(inprod(beta[1:p], x[i,t-1,1:p]))}
+    for (t in 1:n_times){
+      # Equação de estado para lambda
+      lambda[i, t] ~ dgamma(att[i, t],rate= btt[i, t])}
+    for(t in 2:n_times){  
+      # Risco relativo
+      log_theta[i, t] <- log(lambda[i, t]) + inprod(beta[1:p], x[i, t, 1:p])
+      theta[i, t] <- exp(log_theta[i, t])
+      
+      # Equação de observação
+      mu[i,t] <- E[i, t] * epsilon[i] * theta[i, t]
+      Y[i, t] ~ dpois(mu[i,t])
+    }
+    }
+     
+      
+}
+  
+)
 
-#Define the constants 
-modelConstants = list(K= K,
-                      n_regions = dim(x)[1],
-                      n_times = dim(x)[2],
-                      n_covariates_theta = dim(x)[3], 
-                      x = x,
-                      hAI = hAI,
-                      E = E,
-                      sd_beta = 10,
-                      a_unif = a_unif_ini,
-                      b_unif = b_unif_ini,
-                      a0 = a0,
-                      b0 = b0,
-                      mu_beta = beta_ini,
-                      w = w
-);print(modelConstants)
-#list with data
-modelData = list(Y = round(y_ini));print(modelData)
-#valor inicial tem que ta no espaço parametrico da priori
-#list with initial values
-modelInits = list(lambda = lambda_ini,
-                  gamma = matrix(rep(gamma_ini,23),nrow =4,ncol =23),
-                  beta = beta_ini);print(modelInits)
-#Create the model
+n_clusters = 4
+n_covariates = as.integer(dim(x)[3])
+n_regions = as.integer(dim(E)[1])  # Número de regiões
+n_times = as.integer(dim(E)[2]) 
+h_matrix = hAI
+Y_matrix = y_ini
+E_matrix = E
+x_array = x
+constants <- list(
+  count = y_ini,
+  mu_beta = beta_ini,
+  w=0.9,
+  a_unif = a_unif_ini,
+  b_unif = b_unif_ini,
+  n_regions = n_regions,
+  n_times = n_times,
+  p = n_covariates,
+  K = n_clusters,
+  a0 = 1,    # hiperparâmetros iniciais
+  b0 = 1,
+  h = h_matrix  # matriz de indicadores de cluster
+)
 
-model = nimbleModel(code,constants = modelConstants,data = modelData,inits = modelInits)
+data <- list(
+  Y = round(Y_matrix),      # dados observados
+  E = E_matrix,      # valores esperados
+  x = x_array        # array de covariáveis [A, T, p]
+)
 
-model$defaultModelValues
-#checking the model
-print(model)
-print(model$lambda)
-print(model$gamma)
-print(model$beta)
-print(model$epsilon)
-model$calculate()
-cat("Dimensions of x:", dim(x), "\n")
-cat("Dimensions of Y:", dim(y_ini), "\n")
-#compilando o modelo
-cModel = compileNimble(model)
+# Inicialização
+inits1 <- list(
+  beta = rnorm(constants$p, 0, 1),
+  gamma = gamma_ini,
+  lambda = matrix(lambda0, constants$n_regions, constants$n_times)
+)
+inits2 <- list(beta = rnorm(constants$p, beta_ini, 1),
+               gamma = gamma_ini/2,
+               lambda = matrix(1, constants$n_regions, constants$n_times))
+inits <- c(inits1,inits2)
+# Construir modelo
+model <- nimbleModel(code, constants = constants, data = data, inits = inits)
 
-#configurando os targets
-modelConf = configureMCMC(model,monitors=c('Y','beta','gamma',
-                                           'mu',"lambda",'epsilon',
-                                           'theta','a','b'), useConjugacy = TRUE,enableWAIC = TRUE);print(modelConf)
+# Configurar MCMC
+conf <- configureMCMC(model, monitors = c("beta", "gamma", "lambda", "theta"))
 
-#removendo e adicionando o sampler
-modelConf$removeSamplers("lambda")
-modelConf$addSampler(target = "lambda",type = "dynamic_sampler")
-modelConf$samplerConfs
-
-
-#construindo MCMC
-
-modelMCMC = buildMCMC(modelConf)
-
-cMCMC <- compileNimble(modelMCMC, project = model, resetFunctions = TRUE);print(cMCMC)
-
-
-#MCMC
-
+# ✅ REMOVER apenas os samplers que serão substituídos
+conf$removeSamplers("lambda")  # Apenas lambda precisa de sampler customizado
 tryCatch({
-  mcmc.out = nimbleMCMC(cMCMC, inits = modelInits,
-                        nchains = 1, niter = 10000,
-                        summary = TRUE, WAIC = FALSE)
+  conf$addSampler(target = "lambda", type = dynamic_sampler
+                  )
+  print("Sampler personalizado adicionado")
 }, error = function(e) {
-  cat("Error in nimbleMCMC:", e$message, "\n")
+  print(paste("Erro ao adicionar sampler:", e$message))
 })
 
-mcmc.out$samples
-gelman.diag(mcmc.out$samples[,c('beta[1]','beta[2]','beta[3]')])
-aux = mcmc.out$samples$chain1
-plot(aux[,1])  
+# ✅ DEPOIS amostrar lambda (usa a_prev/b_prev que dependem de beta/gamma)
+conf$addSampler(target = "lambda", type = dynamic_sampler, 
+                control = list(
+                  n_regions = as.integer(constants$n_regions)[1],
+                  n_times   = as.integer(constants$n_times)[1],
+                  dbeta     = as.integer(constants$p)[1],
+                  w         = as.numeric(0.9)[1],
+                  a0        = as.numeric(constants$a0)[1],
+                  b0        = as.numeric(constants$b0)[1]
+                ))
+
+# ✅ VERIFICAR a configuração
+print(conf$samplerConfs)
+
+
+Cmodel <- compileNimble(model)                   # ✅ Primeiro o modelo
+Rmcmc <- buildMCMC(conf)   # ✅ Depois o MCMC
+Cmcmc <- compileNimble(Rmcmc, project = Cmodel,showCompilerOutput = T)
+  
+print("Informações das variáveis:")
+for(var_name in names(model$getVarNames())) {
+  var_info <- model$getVarInfo(var_name)
+  print(paste("Variável:", var_name, 
+              "nDim:", var_info$nDim, 
+              "Tipo:", var_info$type,
+              "Dims:", paste(var_info$maxs, collapse = "x")))
+}
+
+# Verificar especificamente a variável 'lambda'
+lambda_info <- model$getVarInfo("lambda")
+print("Informações do lambda:")
+print(lambda_info)
+
+print("Informações de todas as variáveis:")
+all_vars <- (model$getVarNames())
+for(var_name in all_vars) {
+  var_info <- model$getVarInfo(var_name)
+  print(paste("Variável:", var_name, 
+              "nDim:", var_info$nDim, 
+              "Dims:", paste(var_info$maxs, collapse = "x")))
+}
+
+# Verificar variáveis específicas que podem causar problemas
+problem_vars <- c("theta", "log_theta", "mu", "epsilon", "gamma", "beta")
+for(var_name in problem_vars) {
+  if(var_name %in% all_vars) {
+    var_info <- model$getVarInfo(var_name)
+    print(paste("Variável problemática:", var_name, 
+                "nDim:", var_info$nDim, 
+                "Dims:", paste(var_info$maxs, collapse = "x")))
+  }
+}
+
+conf_default <- configureMCMC(model, monitors = c("beta", "gamma", "lambda", "theta"))
+
+# Verificar quais samplers estão sendo usados
+print("Samplers configurados (padrão):")
+print(conf_default$getSamplers())
+
+# Compilar modelo
+Cmodel <- compileNimble(model)
+print("Modelo compilado com sucesso")
+
+# Compilar MCMC com samplers padrão
+Rmcmc_default <- buildMCMC(conf_default)
+Cmcmc_default <- compileNimble(Rmcmc_default, project = Cmodel)
+
+# ✅ EXECUTAR
+nchains <- 2
+samples <- runMCMC(Cmcmc, nchains = nchains, niter = 5000,inits=inits)
+mcmc_list <- mcmc.list(lapply(1:nchains,function(chain){
+  mcmc(samples[[chain]])
+}))
+beta_1_samples<- lapply(mcmc_list,function(chain){
+  as.mcmc(chain)[,"beta[1]"]
+})
+beta_2_samples<- lapply(mcmc_list,function(chain){
+  as.mcmc(chain)[,"beta[2]"]
+})
+beta_3_samples<- lapply(mcmc_list,function(chain){
+  as.mcmc(chain)[,"beta[3]"]
+})
+lambda1_1_samples <- lapply(mcmc_list, function(chain) {
+  as.mcmc(chain)[, "lambda[1, 1]"]
+})
+lambda1_2_samples <- lapply(mcmc_list, function(chain) {
+  as.mcmc(chain)[, "lambda[1, 2]"]
+})
+lambda1_3_samples <- lapply(mcmc_list, function(chain) {
+  as.mcmc(chain)[, "lambda[1, 3]"]
+})
+lambda1_4_samples <- lapply(mcmc_list, function(chain) {
+  as.mcmc(chain)[, "lambda[1, 4]"]
+})
+lambda1_5_samples <- lapply(mcmc_list, function(chain) {
+  as.mcmc(chain)[, "lambda[1, 5]"]
+})
+lambda1_10_samples <- lapply(mcmc_list, function(chain) {
+  as.mcmc(chain)[, "lambda[1, 10]"]
+})
+lambda1_11_samples <- lapply(mcmc_list, function(chain) {
+  as.mcmc(chain)[, "lambda[1, 11]"]
+})
+lambda1_12_samples <- lapply(mcmc_list, function(chain) {
+  as.mcmc(chain)[, "lambda[1, 12]"]
+})
+lambda1_13_samples <- lapply(mcmc_list, function(chain) {
+  as.mcmc(chain)[, "lambda[1, 13]"]
+})
+lambda1_14_samples <- lapply(mcmc_list, function(chain) {
+  as.mcmc(chain)[, "lambda[1, 14]"]
+})
+lambda1_15_samples <- lapply(mcmc_list, function(chain) {
+  as.mcmc(chain)[, "lambda[1, 15]"]
+})
+lambda1_16_samples <- lapply(mcmc_list, function(chain) {
+  as.mcmc(chain)[, "lambda[1, 16]"]
+})
+lambda1_17_samples <- lapply(mcmc_list, function(chain) {
+  as.mcmc(chain)[, "lambda[1, 17]"]
+})
+lambda1_18_samples <- lapply(mcmc_list, function(chain) {
+  as.mcmc(chain)[, "lambda[1, 18]"]
+})
+lambda1_19_samples <- lapply(mcmc_list, function(chain) {
+  as.mcmc(chain)[, "lambda[1, 19]"]
+})
+lambda1_20_samples <- lapply(mcmc_list, function(chain) {
+  as.mcmc(chain)[, "lambda[1, 20]"]
+})
+lambda1_21_samples <- lapply(mcmc_list, function(chain) {
+  as.mcmc(chain)[, "lambda[1, 21]"]
+})
+lambda1_22_samples <- lapply(mcmc_list, function(chain) {
+  as.mcmc(chain)[, "lambda[1, 22]"]
+})
+lambda1_23_samples <- lapply(mcmc_list, function(chain) {
+  as.mcmc(chain)[, "lambda[1, 23]"]
+})
+
+lambda2_23_samples <- lapply(mcmc_list, function(chain) {
+  as.mcmc(chain)[, "lambda[2, 23]"]
+})
+
+lambda2_1_samples <- lapply(mcmc_list, function(chain) {
+  as.mcmc(chain)[, "lambda[2, 1]"]
+})
+gamma1_samples <- lapply(mcmc_list, function(chain) {
+  as.mcmc(chain)[, "gamma[1]"]})
+gamma2_samples <- lapply(mcmc_list, function(chain) {
+  as.mcmc(chain)[, "gamma[2]"]})
+gamma3_samples <- lapply(mcmc_list, function(chain) {
+  as.mcmc(chain)[, "gamma[3]"]})
+gamma4_samples <- lapply(mcmc_list, function(chain) {
+  as.mcmc(chain)[, "gamma[4]"]})
+
+#traceplot lambda
+par(mfrow = c(2,1))
+for(i in 1:nchains){
+  traceplot(lambda1_1_samples[i],main = paste("Cadeia",i),xlab = "Iterações",ylab = "Valores")
+  
+}
+
+for(i in 1:nchains){
+  traceplot(lambda1_2_samples[i],main = paste("Cadeia",i),xlab = "Iterações",ylab = "Valores")
+  
+}
+
+for(i in 1:nchains){
+  traceplot(lambda1_3_samples[i],main = paste("Cadeia",i),xlab = "Iterações",ylab = "Valores")
+}
+
+for(i in 1:nchains){
+  traceplot(lambda1_10_samples[i],main = paste("Cadeia",i),xlab = "Iterações",ylab = "Valores")
+}
+for(i in 1:nchains){
+  traceplot(lambda1_11_samples[i],main = paste("Cadeia",i),xlab = "Iterações",ylab = "Valores")
+}
+for(i in 1:nchains){
+  traceplot(lambda1_12_samples[i],main = paste("Cadeia",i),xlab = "Iterações",ylab = "Valores")
+}
+for(i in 1:nchains){
+  traceplot(lambda1_13_samples[i],main = paste("Cadeia",i),xlab = "Iterações",ylab = "Valores")
+}
+for(i in 1:nchains){
+  traceplot(lambda1_14_samples[i],main = paste("Cadeia",i),xlab = "Iterações",ylab = "Valores")
+}
+for(i in 1:nchains){
+  traceplot(lambda1_15_samples[i],main = paste("Cadeia",i),xlab = "Iterações",ylab = "Valores")
+}
+for(i in 1:nchains){
+  traceplot(lambda1_16_samples[i],main = paste("Cadeia",i),xlab = "Iterações",ylab = "Valores")
+}
+for(i in 1:nchains){
+  traceplot(lambda1_17_samples[i],main = paste("Cadeia",i),xlab = "Iterações",ylab = "Valores")
+}
+for(i in 1:nchains){
+  traceplot(lambda1_18_samples[i],main = paste("Cadeia",i),xlab = "Iterações",ylab = "Valores")
+}
+for(i in 1:nchains){
+  traceplot(lambda1_19_samples[i],main = paste("Cadeia",i),xlab = "Iterações",ylab = "Valores")
+}
+for(i in 1:nchains){
+  traceplot(lambda1_20_samples[i],main = paste("Cadeia",i),xlab = "Iterações",ylab = "Valores")
+}
+for(i in 1:nchains){
+  traceplot(lambda1_21_samples[i],main = paste("Cadeia",i),xlab = "Iterações",ylab = "Valores")
+}
+for(i in 1:nchains){
+  traceplot(lambda1_22_samples[i],main = paste("Cadeia",i),xlab = "Iterações",ylab = "Valores")
+}
+for(i in 1:nchains){
+  traceplot(lambda1_23_samples[i],main = paste("Cadeia",i),xlab = "Iterações",ylab = "Valores")
+}
+for(i in 1:nchains){
+  traceplot(lambda2_23_samples[i],main = paste("Cadeia",i),xlab = "Iterações",ylab = "Valores")
+}
+for(i in 1:nchains){
+  traceplot(lambda2_1_samples[i],main = paste("Cadeia",i),xlab = "Iterações",ylab = "Valores")
+}
+#traceplot betas
+for(i in 1:nchains){
+  traceplot(beta_1_samples[i],main = paste("Cadeia",i),xlab = "Iterações",ylab = "Valores")}
+
+for(i in 1:nchains){
+  traceplot(beta_2_samples[i],main = paste("Cadeia",i),xlab = "Iterações",ylab = "Valores")}
+
+for(i in 1:nchains){
+  traceplot(beta_3_samples[i],main = paste("Cadeia",i),xlab = "Iterações",ylab = "Valores")}
+
+#traceplot gammas
+
+for(i in 1:nchains){
+  traceplot(gamma1_samples[i],main = paste("Cadeia",i),xlab = "Iterações",ylab = "Valores")}
+for(i in 1:nchains){
+  traceplot(gamma2_samples[i],main = paste("Cadeia",i),xlab = "Iterações",ylab = "Valores")}
+for(i in 1:nchains){
+  traceplot(gamma3_samples[i],main = paste("Cadeia",i),xlab = "Iterações",ylab = "Valores")}
+for(i in 1:nchains){
+  traceplot(gamma4_samples[i],main = paste("Cadeia",i),xlab = "Iterações",ylab = "Valores")}
+
+calcNodes <- model$getDependencies("lambda")    
+nodes <- calcNodes
+# pega log-prob por nó
+lp_by_node <- sapply(nodes, function(n) model$getLogProb(n))
+# ordena e mostra os 20 piores
+ord <- order(lp_by_node)
+data.frame(node = nodes[ord[1:20]], logProb = lp_by_node[ord[1:20]])
+
+range(values(Cmodel, 'epsilon'), na.rm=TRUE)
+range(values(Cmodel, 'theta'), na.rm=TRUE)
+range(values(Cmodel, 'mu'), na.rm=TRUE)
+range(values(Cmodel, 'lambda'), na.rm=TRUE)
+range(values(Cmodel, 'a_prev'), na.rm=TRUE)
+range(values(Cmodel, 'b_prev'), na.rm=TRUE)
+
+i <- 74
+T <- constants$T
+A <- constants$A
+idx <- ((i - 1) * T + 1):(i * T)
+values(Cmodel, 'Y')[idx]
