@@ -19,11 +19,7 @@ dynamic_sampler <- nimbleFunction(
     calcNodes <- control$calcNodes
     
     ## declarar variáveis explicitamente
-    declare(att_buf, 'double[ , ]')
-    declare(btt_buf, 'double[ , ]')
-    declare(at_buf, 'double[ , ]')
-    declare(bt_buf, 'double[ , ]')
-    declare(calcNodes, 'ANY')
+    
     
     ## devolver objetos para run()
     setupOutputs(
