@@ -1,0 +1,42 @@
+5,14c5,9
+<     if(is.null(control$n_regions)) stop("n_regions não definido no controle")
+<     if(is.null(control$n_times))   stop("n_times não definido no controle")
+<     if(is.null(control$dbeta))     stop("dbeta não definido no controle")
+<     if(is.null(control$w))         stop("w não definido no controle")
+<     if(is.null(control$a0))        stop("a0 não definido no controle")
+<     if(is.null(control$b0))        stop("b0 não definido no controle")
+<     n_regions <- as.integer(control$n_regions)[1]
+<     n_times   <- as.integer(control$n_times)[1]
+<     dbeta     <- as.integer(control$dbeta)[1]
+<     w         <- control$w
+---
+>     names <- model$expandNodeNames(target)
+>     n_regions <- as.integer(constants$n_regions)[1]
+>     n_times   <- as.integer(constants$n_times)[1]
+>     dbeta     <- as.integer(constants$dbeta)[1]
+>     w         <- constants$w
+26,33c21,28
+<       
+<         n_regions = n_regions,
+<         n_times   = n_times,
+<         dbeta     = dbeta,
+<         w         = w,
+<         a0        = a0,
+<         b0        = b0,
+<         att_buf   = att_buf,
+---
+>       names = names,
+>       n_regions = n_regions,
+>       n_times   = n_times,
+>       dbeta     = dbeta,
+>       w         = w,
+>       a0        = a0,
+>       b0        = b0,
+>       att_buf   = att_buf,
+37,39c32,33
+<         calcNodes = calcNodes
+<       
+<     )
+---
+>       calcNodes = calcNodes
+>       )
