@@ -56,9 +56,7 @@ code <- nimbleCode({
      
       
 }
-  
-)
-
+) 
 n_clusters = 4
 n_covariates = as.integer(dim(x)[3])
 n_regions = as.integer(dim(E)[1])  # Número de regiões
@@ -106,24 +104,9 @@ conf <- configureMCMC(model, monitors = c("beta", "gamma", "lambda", "theta"))
 
 # ✅ REMOVER apenas os samplers que serão substituídos
 conf$removeSamplers("lambda")  # Apenas lambda precisa de sampler customizado
-tryCatch({
-  conf$addSampler(target = "lambda", type = dynamic_sampler
-                  )
-  print("Sampler personalizado adicionado")
-}, error = function(e) {
-  print(paste("Erro ao adicionar sampler:", e$message))
-})
 
 # ✅ DEPOIS amostrar lambda (usa a_prev/b_prev que dependem de beta/gamma)
-conf$addSampler(target = "lambda", type = dynamic_sampler, 
-                control = list(
-                  n_regions = as.integer(constants$n_regions)[1],
-                  n_times   = as.integer(constants$n_times)[1],
-                  dbeta     = as.integer(constants$p)[1],
-                  w         = as.numeric(0.9)[1],
-                  a0        = as.numeric(constants$a0)[1],
-                  b0        = as.numeric(constants$b0)[1]
-                ))
+conf$addSampler(target = "lambda", type = dynamic_sampler)
 
 # ✅ VERIFICAR a configuração
 print(conf$samplerConfs)
