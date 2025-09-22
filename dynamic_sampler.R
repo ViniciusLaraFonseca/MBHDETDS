@@ -2,74 +2,96 @@ dynamic_sampler <- nimbleFunction(
   contains = sampler_BASE,
   setup = function(model, mvSaved, target, control) {
     ## checagens de controle
-    names <- model$expandNodeNames(target)
     n_regions <- as.integer(constants$n_regions)[1]
     n_times   <- as.integer(constants$n_times)[1]
-    dbeta     <- as.integer(constants$dbeta)[1]
+    p         <- as.integer(constants$p)[1]
     w         <- constants$w
     a0        <- constants$a0
     b0        <- constants$b0
-    ## buffers 2D via nimMatrix
-    att_buf <- nimMatrix(init = 0, nrow = n_regions, ncol = n_times)
-    btt_buf <- nimMatrix(init = 0, nrow = n_regions, ncol = n_times)
-    at_buf  <- nimMatrix(init = 0, nrow = n_regions, ncol = n_times + 1)
-    bt_buf  <- nimMatrix(init = 0, nrow = n_regions, ncol = n_times + 1)
+    
+    ## buffers 2D via nimMatrix com tipo explícito
+    att_buf <- nimMatrix(nrow = n_regions, ncol = n_times, init = 0, type = 'double')
+    btt_buf <- nimMatrix(nrow = n_regions, ncol = n_times, init = 0, type = 'double')
+    at_buf  <- nimMatrix(nrow = n_regions, ncol = (n_times+1), init = 0, type = 'double')
+    bt_buf  <- nimMatrix(nrow = n_regions, ncol = (n_times+1), init = 0, type = 'double')
+    
     ## nós dependentes do target
-    calcNodes <- model$getDependencies(target)
-    ## tudo que o run() precisa tem que ser devolvido aqui
+    calcNodes <- control$calcNodes
+    
+    ## declarar variáveis explicitamente
+    declare(att_buf, 'double[ , ]')
+    declare(btt_buf, 'double[ , ]')
+    declare(at_buf, 'double[ , ]')
+    declare(bt_buf, 'double[ , ]')
+    declare(calcNodes, 'ANY')
+    
+    ## devolver objetos para run()
     setupOutputs(
-      names = names,
       n_regions = n_regions,
       n_times   = n_times,
-      dbeta     = dbeta,
+      p         = p,
       w         = w,
       a0        = a0,
       b0        = b0,
       att_buf   = att_buf,
-        btt_buf   = btt_buf,
-        at_buf    = at_buf,
-        bt_buf    = bt_buf,
+      btt_buf   = btt_buf,
+      at_buf    = at_buf,
+      bt_buf    = bt_buf,
       calcNodes = calcNodes
-      )
+    )
   },
+  
   run = function() {
-    declare(i,  integer(0))
-    declare(t,  integer(0))
-    declare(tt, integer(0))
-    declare(k,  integer(0))
-    model$calculate(nodes = "epsilon")
+    declare(i, integer())
+    declare(t, integer())
+    declare(tt, integer())
+    declare(k, integer())
+    declare(prod_val, double())
+    
     for(i in 1:n_regions) {
       at_buf[i, 1] <<- a0
       bt_buf[i, 1] <<- b0
+      
+      ## Inicializar prod_val
       prod_val <- 0
-      for(k in 1:dbeta) {
+      for(k in 1:p) {
         prod_val <- prod_val + model$x[i, 1, k] * model$beta[k]
       }
+      
       for(t in 2:(n_times + 1)) {
         att_buf[i, t-1] <<- w * at_buf[i, t-1]
-        btt_buf[i, t-1] <<- w * bt_buf[i, t-1]/(model$epsilon[i] * model$E[i, t-1] * exp(prod_val))
+        btt_buf[i, t-1] <<- w * bt_buf[i, t-1] / (model$epsilon[i] * model$E[i, t-1] * exp(prod_val))
         at_buf[i, t]    <<- att_buf[i, t-1] + model$count[i, t-1]
+        
+        ## recalcular prod_val
         prod_val <- 0
-        for(k in 1:dbeta) {
+        for(k in 1:p) {
           prod_val <- prod_val + model$x[i, t-1, k] * model$beta[k]
         }
-        bt_buf[i, t] <<- w*bt_buf[i, t-1] +
+        
+        bt_buf[i, t] <<- w * bt_buf[i, t-1] +
           model$epsilon[i] * model$E[i, t-1] * exp(prod_val)
       }
-      model$lambda[i, n_times] <<-
-        rgamma(1, at_buf[i, n_times], btt_buf[i, n_times])
-      for(tt in n_times:2) {
-        model$lambda[i, tt-1] <<-
-          rgamma(1,
-                 (1 - w) * at_buf[i, tt-1],
-                 bt_buf[i, tt-1]
-          ) + w * model$lambda[i, tt]
+      
+      ## amostragem lambda (ultimo tempo)
+      model$lambda[i, n_times] <<- rgamma(1, at_buf[i, n_times], btt_buf[i, n_times])
+      
+      ## backward recursion
+      for(tt in seq(n_times, 2, by = -1)) {
+        model$lambda[i, tt-1] <<- 
+          rgamma(1, (1 - w) * at_buf[i, tt-1], bt_buf[i, tt-1]) +
+          w * model$lambda[i, tt]
       }
     }
+    
+    ## calcular logProb
     model$calculate(calcNodes)
+    
+    ## copiar para mvSaved
     copy(from = model, to = mvSaved, row = 1,
          nodes = calcNodes, logProb = TRUE)
   },
+  
   methods = list(
     reset = function() {}
   )
