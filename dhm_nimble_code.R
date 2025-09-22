@@ -1,3 +1,6 @@
+# -------------------------------
+# 1️⃣ Código do modelo
+# -------------------------------
 code <- nimbleCode({
   # Priors para coeficientes de regressão
   for (j in 1:p) {
@@ -13,160 +16,115 @@ code <- nimbleCode({
     )
   }
   
-  # Estrutura para probabilidade de notificação
+  # Probabilidade de notificação
   for (i in 1:n_regions) {
     epsilon[i] <- 1 - sum(h[i, 1:K] * gamma[1:K])
   }
   
-  # Modelo para estados latentes e observações
+  # Estados latentes e observações
   for (i in 1:n_regions) {
-    # Inicialização do processo dinâmico
+    # Inicialização
     log_theta[i, 1] <- log(lambda[i, 1]) + inprod(beta[1:p], x[i, 1, 1:p])
     theta[i, 1] <- exp(log_theta[i, 1])
-    
-    # Equação de observação
     mu[i,1] <- E[i, 1] * epsilon[i] * theta[i, 1]
     Y[i, 1] ~ dpois(mu[i,1])
     
-    # Inicialização dos parâmetros de filtragem
-    at[i, 1] <- a0 
+    at[i, 1] <- a0
+    bt[i, 1] <- b0
     
-    bt[i, 1] <- b0 
-    
-    # Evolução temporal
     for (t in 2:(n_times+1)) {
-      # Atualização dos parâmetros
       att[i,t-1] <- w*at[i,t-1]
       btt[i,t-1] <- w*bt[i,t-1]
       at[i, t] <- att[i, t-1] + count[i, t-1]
-      bt[i, t] <- btt[i, t-1] + E[i, t-1] * epsilon[i] * exp(inprod(beta[1:p], x[i,t-1,1:p]))}
-    for (t in 1:n_times){
-      # Equação de estado para lambda
-      lambda[i, t] ~ dgamma(att[i, t],rate= btt[i, t])}
+      bt[i, t] <- btt[i, t-1] + E[i, t-1] * epsilon[i] * exp(inprod(beta[1:p], x[i,t-1,1:p]))
+    }
+    
+    for (t in 1:n_times) {
+      lambda[i, t] ~ dgamma(att[i, t], rate = btt[i, t])
+    }
+    
     for(t in 2:n_times){  
-      # Risco relativo
       log_theta[i, t] <- log(lambda[i, t]) + inprod(beta[1:p], x[i, t, 1:p])
       theta[i, t] <- exp(log_theta[i, t])
-      
-      # Equação de observação
       mu[i,t] <- E[i, t] * epsilon[i] * theta[i, t]
       Y[i, t] ~ dpois(mu[i,t])
     }
-    }
-     
-      
-}
-) 
-n_clusters = 4
-n_covariates = as.integer(dim(x)[3])
-n_regions = as.integer(dim(E)[1])  # Número de regiões
-n_times = as.integer(dim(E)[2]) 
-h_matrix = hAI
-Y_matrix = y_ini
-E_matrix = E
-x_array = x
+  }
+})
+
+# -------------------------------
+# 2️⃣ Constantes e dados
+# -------------------------------
+n_clusters   <- 4
+n_covariates <- as.integer(dim(x)[3])
+n_regions    <- as.integer(dim(E)[1])
+n_times      <- as.integer(dim(E)[2])
+
 constants <- list(
-  count = y_ini,
+  count   = y_ini,
   mu_beta = beta_ini,
-  w=0.9,
-  a_unif = a_unif_ini,
-  b_unif = b_unif_ini,
+  w       = 0.9,
+  a_unif  = a_unif_ini,
+  b_unif  = b_unif_ini,
   n_regions = n_regions,
-  n_times = n_times,
-  p = n_covariates,
-  K = n_clusters,
-  a0 = 1,    # hiperparâmetros iniciais
-  b0 = 1,
-  h = h_matrix  # matriz de indicadores de cluster
+  n_times   = n_times,
+  p         = n_covariates,
+  K         = n_clusters,
+  a0        = 1,
+  b0        = 1,
+  h         = hAI
 )
 
 data <- list(
-  Y = round(Y_matrix),      # dados observados
-  E = E_matrix,      # valores esperados
-  x = x_array        # array de covariáveis [A, T, p]
+  Y = round(y_ini),
+  E = E,
+  x = x
 )
 
-# Inicialização
+# -------------------------------
+# 3️⃣ Inicializações para 2 cadeias
+# -------------------------------
 inits1 <- list(
-  beta = rnorm(constants$p, 0, 1),
-  gamma = gamma_ini,
-  lambda = matrix(lambda0, constants$n_regions, constants$n_times)
+  beta   = rnorm(constants$p, 0, 1),
+  gamma  = gamma_ini,
+  lambda = matrix(lambda0, n_regions, n_times)
 )
-inits2 <- list(beta = rnorm(constants$p, beta_ini, 1),
-               gamma = gamma_ini/2,
-               lambda = matrix(1, constants$n_regions, constants$n_times))
-inits <- c(inits1,inits2)
-# Construir modelo
-model <- nimbleModel(code, constants = constants, data = data, inits = inits)
 
-# Configurar MCMC
+inits2 <- list(
+  beta   = rnorm(constants$p, beta_ini, 1),
+  gamma  = gamma_ini / 2,
+  lambda = matrix(1, n_regions, n_times)
+)
+
+inits_list <- list(inits1, inits2)
+
+
+
+# -------------------------------
+# 5️⃣ Configurar MCMC
+# -------------------------------
+model <- nimbleModel(code, constants = constants, data = data, inits = inits1)
+targetNodes <- model$expandNodeNames("lambda")
+calcNodes   <- model$getDependencies(targetNodes, determOnly = FALSE)
+
 conf <- configureMCMC(model, monitors = c("beta", "gamma", "lambda", "theta"))
+conf$removeSamplers("lambda")
+conf$addSampler(target = "lambda", type = dynamic_sampler,
+                control = list(calcNodes = calcNodes))
 
-# ✅ REMOVER apenas os samplers que serão substituídos
-conf$removeSamplers("lambda")  # Apenas lambda precisa de sampler customizado
-
-# ✅ DEPOIS amostrar lambda (usa a_prev/b_prev que dependem de beta/gamma)
-conf$addSampler(target = "lambda", type = dynamic_sampler)
-
-# ✅ VERIFICAR a configuração
-print(conf$samplerConfs)
-
-
-Cmodel <- compileNimble(model)                   # ✅ Primeiro o modelo
-Rmcmc <- buildMCMC(conf)   # ✅ Depois o MCMC
-Cmcmc <- compileNimble(Rmcmc, project = Cmodel,showCompilerOutput = T)
-  
-print("Informações das variáveis:")
-for(var_name in names(model$getVarNames())) {
-  var_info <- model$getVarInfo(var_name)
-  print(paste("Variável:", var_name, 
-              "nDim:", var_info$nDim, 
-              "Tipo:", var_info$type,
-              "Dims:", paste(var_info$maxs, collapse = "x")))
-}
-
-# Verificar especificamente a variável 'lambda'
-lambda_info <- model$getVarInfo("lambda")
-print("Informações do lambda:")
-print(lambda_info)
-
-print("Informações de todas as variáveis:")
-all_vars <- (model$getVarNames())
-for(var_name in all_vars) {
-  var_info <- model$getVarInfo(var_name)
-  print(paste("Variável:", var_name, 
-              "nDim:", var_info$nDim, 
-              "Dims:", paste(var_info$maxs, collapse = "x")))
-}
-
-# Verificar variáveis específicas que podem causar problemas
-problem_vars <- c("theta", "log_theta", "mu", "epsilon", "gamma", "beta")
-for(var_name in problem_vars) {
-  if(var_name %in% all_vars) {
-    var_info <- model$getVarInfo(var_name)
-    print(paste("Variável problemática:", var_name, 
-                "nDim:", var_info$nDim, 
-                "Dims:", paste(var_info$maxs, collapse = "x")))
-  }
-}
-
-conf_default <- configureMCMC(model, monitors = c("beta", "gamma", "lambda", "theta"))
-
-# Verificar quais samplers estão sendo usados
-print("Samplers configurados (padrão):")
-print(conf_default$getSamplers())
-
-# Compilar modelo
+# -------------------------------
+# 6️⃣ Compilar modelo e MCMC
+# -------------------------------
 Cmodel <- compileNimble(model)
-print("Modelo compilado com sucesso")
+Rmcmc  <- buildMCMC(conf)
+Cmcmc  <- compileNimble(Rmcmc, project = Cmodel, showCompilerOutput = TRUE)
 
-# Compilar MCMC com samplers padrão
-Rmcmc_default <- buildMCMC(conf_default)
-Cmcmc_default <- compileNimble(Rmcmc_default, project = Cmodel)
+# -------------------------------
+# 7️⃣ Rodar MCMC com múltiplas cadeias
+# -------------------------------
+samples <- runMCMC(Cmcmc, niter = 10000, nchains = 2, inits = inits_list, samplesAsCodaMCMC = TRUE)
 
-# ✅ EXECUTAR
-nchains <- 2
-samples <- runMCMC(Cmcmc, nchains = nchains, niter = 5000,inits=inits)
+
 mcmc_list <- mcmc.list(lapply(1:nchains,function(chain){
   mcmc(samples[[chain]])
 }))
