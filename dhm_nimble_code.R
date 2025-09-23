@@ -61,7 +61,6 @@ n_regions    <- as.integer(dim(E)[1])
 n_times      <- as.integer(dim(E)[2])
 
 constants <- list(
-  count   = y_ini,
   mu_beta = beta_ini,
   w       = 0.9,
   a_unif  = a_unif_ini,
@@ -70,16 +69,17 @@ constants <- list(
   n_times   = n_times,
   p         = n_covariates,
   K         = n_clusters,
-  a0        = 1,
-  b0        = 1,
+  a0 = 1,
+  b0 = 1,
   h         = hAI
-)
+);print(constants)
 
 data <- list(
   Y = round(y_ini),
   E = E,
-  x = x
-)
+  x = x,
+  count = round(y_ini)
+);print(data)
 
 # -------------------------------
 # 3️⃣ Inicializações para 2 cadeias
@@ -88,7 +88,7 @@ inits1 <- list(
   beta   = rnorm(constants$p, 0, 1),
   gamma  = gamma_ini,
   lambda = matrix(lambda0, n_regions, n_times)
-)
+);print(inits1)
 
 inits2 <- list(
   beta   = rnorm(constants$p, beta_ini, 1),
@@ -104,13 +104,12 @@ inits_list <- list(inits1, inits2)
 # 5️⃣ Configurar MCMC
 # -------------------------------
 model <- nimbleModel(code, constants = constants, data = data, inits = inits1)
-targetNodes <- model$expandNodeNames("lambda")
-calcNodes   <- model$getDependencies(targetNodes, determOnly = FALSE)
+calcNodes <- model$expandNodeNames("lambda")
 
 conf <- configureMCMC(model, monitors = c("beta", "gamma", "lambda", "theta"))
 conf$removeSamplers("lambda")
 conf$addSampler(target = "lambda", type = dynamic_sampler,
-                control = list(calcNodes = calcNodes))
+                control = list(w = 0.9, a0 = 1, b0 = 1))
 
 # -------------------------------
 # 6️⃣ Compilar modelo e MCMC
