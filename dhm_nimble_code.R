@@ -103,25 +103,35 @@ inits_list <- list(inits1, inits2)
 # -------------------------------
 # 5️⃣ Configurar MCMC
 # -------------------------------
-model <- nimbleModel(code, constants = constants, data = data, inits = inits1)
-calcNodes <- model$expandNodeNames("lambda")
 
+model <- nimbleModel(code, constants = constants, data = data, inits = inits1)
 conf <- configureMCMC(model, monitors = c("beta", "gamma", "lambda", "theta"))
 conf$removeSamplers("lambda")
 conf$addSampler(target = "lambda", type = dynamic_sampler,
                 control = list(w = 0.9, a0 = 1, b0 = 1))
+print(conf$samplerConfs)
 
 # -------------------------------
 # 6️⃣ Compilar modelo e MCMC
 # -------------------------------
+
 Cmodel <- compileNimble(model)
 Rmcmc  <- buildMCMC(conf)
 Cmcmc  <- compileNimble(Rmcmc, project = Cmodel, showCompilerOutput = TRUE)
 
 # -------------------------------
+#compilar modelo e MCMC sem o dynamic_sampler
+# -------------------------------
+
+conf_test <- configureMCMC(model, monitors = c("beta", "gamma", "lambda", "theta"))
+Rmcmc_test <- buildMCMC(conf_test)
+Cmcmc  <- compileNimble(Rmcmc_test, project = Cmodel, showCompilerOutput = TRUE)
+
+# -------------------------------
 # 7️⃣ Rodar MCMC com múltiplas cadeias
 # -------------------------------
-samples <- runMCMC(Cmcmc, niter = 10000, nchains = 2, inits = inits_list, samplesAsCodaMCMC = TRUE)
+nchains = length(inits_list)
+samples <- runMCMC(Cmcmc, niter = 10000, nchains = nchains, inits = inits_list, samplesAsCodaMCMC = TRUE)
 
 
 mcmc_list <- mcmc.list(lapply(1:nchains,function(chain){
@@ -295,23 +305,3 @@ for(i in 1:nchains){
 for(i in 1:nchains){
   traceplot(gamma4_samples[i],main = paste("Cadeia",i),xlab = "Iterações",ylab = "Valores")}
 
-calcNodes <- model$getDependencies("lambda")    
-nodes <- calcNodes
-# pega log-prob por nó
-lp_by_node <- sapply(nodes, function(n) model$getLogProb(n))
-# ordena e mostra os 20 piores
-ord <- order(lp_by_node)
-data.frame(node = nodes[ord[1:20]], logProb = lp_by_node[ord[1:20]])
-
-range(values(Cmodel, 'epsilon'), na.rm=TRUE)
-range(values(Cmodel, 'theta'), na.rm=TRUE)
-range(values(Cmodel, 'mu'), na.rm=TRUE)
-range(values(Cmodel, 'lambda'), na.rm=TRUE)
-range(values(Cmodel, 'a_prev'), na.rm=TRUE)
-range(values(Cmodel, 'b_prev'), na.rm=TRUE)
-
-i <- 74
-T <- constants$T
-A <- constants$A
-idx <- ((i - 1) * T + 1):(i * T)
-values(Cmodel, 'Y')[idx]
