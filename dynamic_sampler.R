@@ -21,7 +21,8 @@ dynamic_sampler <- nimbleFunction(
     bt_buf  <- nimMatrix(nrow = n_regions, ncol = n_times+1, init = 0, type = 'double')
     
     # --- dependências ---
-    calcNodes <<- model$getDependencies(target)
+    calcNodes <- model$getDependencies(target,self = FALSE)
+    targetNodes <- model$expandNodeNames(target)
     setupOutputs(
       n_regions = n_regions,
       n_times   = n_times,
@@ -31,8 +32,7 @@ dynamic_sampler <- nimbleFunction(
       btt_buf = btt_buf,
       at_buf  = at_buf,
       bt_buf  = bt_buf
-      
-    )
+      )
 
   },
   
@@ -55,7 +55,7 @@ dynamic_sampler <- nimbleFunction(
       epsilon_i <- model$epsilon[i]
       ## --- forward recursion ---
       for(t in 2:(n_times+1)) {
-        prod_val <- 0
+        prod_val <- 0.0
         for(k in 1:p) {
           tmp <- model$x[i, t-1, k]
           prod_val <- prod_val + tmp * model$beta[k]
@@ -66,7 +66,7 @@ dynamic_sampler <- nimbleFunction(
         btt_buf[i, t-1] <<- w * bt_buf[i, t-1] / (epsilon_i * E_it * exp(prod_val))
         
         at_buf[i, t] <<- att_buf[i, t-1] + count_it
-        bt_buf[i, t] <<- btt_buf[i, t-1] + 1
+        bt_buf[i, t] <<- w * bt_buf[i, t-1] +(1)* (epsilon_i * E_it * exp(prod_val))
       }
       
       ## --- amostragem lambda no último tempo ---
@@ -84,11 +84,12 @@ dynamic_sampler <- nimbleFunction(
     
     ## atualizar likelihood
     model$calculate(calcNodes)
-    copy(from = model, to = mvSaved, row = 1, nodes = calcNodes, logProb = TRUE)
+    copy(from = model, to = mvSaved, row = 1, nodes = targetNodes, logProb = FALSE)
   },
   
   methods = list(
     reset = function() {}
   )
 )
-
+target = "lambda"
+print(target)
