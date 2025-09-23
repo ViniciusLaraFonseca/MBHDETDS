@@ -66,7 +66,7 @@ dynamic_sampler <- nimbleFunction(
         btt_buf[i, t-1] <<- w * bt_buf[i, t-1] / (epsilon_i * E_it * exp(prod_val))
         
         at_buf[i, t] <<- att_buf[i, t-1] + count_it
-        bt_buf[i, t] <<- w * bt_buf[i, t-1] + epsilon_i * E_it * exp(prod_val)
+        bt_buf[i, t] <<- btt_buf[i, t-1] + 1
       }
       
       ## --- amostragem lambda no último tempo ---
