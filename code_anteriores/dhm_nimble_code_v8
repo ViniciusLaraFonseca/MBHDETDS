@@ -34,9 +34,9 @@ code <- nimbleCode({
     
     for (t in 2:(n_times+1)) {
       att[i,t-1] <- w*at[i,t-1]
-      btt[i,t-1] <- w*bt[i,t-1]/(epsilon[i]*E[i, t-1]* exp(inprod(beta[1:p], x[i,t-1,1:p])))
+      btt[i,t-1] <- w*bt[i,t-1]
       at[i, t] <- att[i, t-1] + count[i, t-1]
-      bt[i, t] <- w*bt[i,t-1] + E[i, t-1] * epsilon[i] * exp(inprod(beta[1:p], x[i,t-1,1:p]))
+      bt[i, t] <- btt[i, t-1] + E[i, t-1] * epsilon[i] * exp(inprod(beta[1:p], x[i,t-1,1:p]))
     }
     
     for (t in 1:n_times) {
@@ -105,10 +105,10 @@ inits_list <- list(inits1, inits2)
 # -------------------------------
 
 model <- nimbleModel(code, constants = constants, data = data, inits = inits1)
-conf <- configureMCMC(model, monitors = c("beta", "gamma", "lambda", "theta","att","btt","at","bt"))
+conf <- configureMCMC(model, monitors = c("beta", "gamma", "lambda", "theta"))
 conf$removeSamplers("lambda")
 conf$addSampler(target = "lambda", type = dynamic_sampler,
-                control = list(w = 0.9))
+                control = list(w = 0.9, a0 = 1, b0 = 1))
 print(conf$samplerConfs)
 
 # -------------------------------
