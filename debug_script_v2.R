@@ -1,0 +1,324 @@
+# --- PASSO 0: CARREGAR PACOTES E GARANTIR REPRODUTIBILIDADE ---
+if (!require(nimble)) {
+  install.packages("nimble")
+}
+if (!require(coda)) {
+  install.packages("coda")
+}
+library(nimble)
+library(coda)
+
+# --- SOLUÇÃO PARA ERRO SYSTEM ERROR 32 ---
+cat("--- Limpando processos anteriores do NIMBLE ---\n")
+tryCatch({
+  # Fecha todas as conexões e limpa compilações anteriores
+  nimble::clearCompiled()
+  gc()  # Coleta de lixo
+}, error = function(e) {
+  cat("Aviso: Não foi possível limpar compilações anteriores\n")
+})
+
+set.seed(123)
+
+cat("--- Início do Script de Depuração Final (Block Sampler AF_slice) ---\n\n")
+
+# --- PASSO 1: DADOS REDUZIDOS E PARÂMETROS ---
+n_regions_debug <- 1; n_times_debug <- 20; p_debug <- 3; K_debug <- 4
+beta_initial_values <- c(0.5, 1, -0.3)
+gamma_fixed <- c(0.05, 0.10, 0.10, 0.15)
+w_debug <- 0.9
+a0_debug <- 1.0; b0_debug <- 1.0
+E_debug_at <- matrix(runif(n_regions_debug * (n_times_debug+1), 100, 200), nrow = n_regions_debug)
+E_debug <- matrix(E_debug_at[,2:(n_times_debug+1)],nrow=n_regions_debug)
+x_debug_at <- array(rnorm(n_regions_debug * (n_times_debug+1) * p_debug), dim = c(n_regions_debug, (n_times_debug+1), p_debug))
+x_debug <- array(x_debug_at[,2:(n_times_debug+1),],dim = c(n_regions_debug, (n_times_debug+1), p_debug))
+hAI_debug <- matrix(c(1, 0, 0, 0), nrow = n_regions_debug)
+epsilon_fixed <- 1 - as.numeric(hAI_debug %*% gamma_fixed)
+
+# Salvar valores reais de lambda para comparação
+set.seed(123)
+lambda0_real <- rgamma(n_times_debug, shape = a0_debug, rate = b0_debug)
+
+#EFEITO DINAMICO 
+lambda0 <- lambda0_real
+mu_true0<- E_debug[1,1] * epsilon_fixed * exp(c(x_debug[1,1,] %*% beta_initial_values)) * lambda0
+y_ini_debug0 <- matrix(rpois(1, lambda = mu_true0), nrow = n_regions_debug)
+lambda_at_fwd <- matrix(NA, ncol = n_times_debug, nrow = n_regions_debug)
+y_at <- matrix(NA, nrow = n_regions_debug, ncol = n_times_debug + 1)
+y_at[, 1] <- y_ini_debug0
+
+att_ini <- matrix(NA, nrow = n_regions_debug, ncol = n_times_debug)
+btt_ini <- matrix(NA, nrow = n_regions_debug, ncol = n_times_debug)
+at_ini  <- matrix(NA, nrow = n_regions_debug, ncol = n_times_debug + 1)
+bt_ini  <- matrix(NA, nrow = n_regions_debug, ncol = n_times_debug + 1)
+
+# Simulação Forward
+for(i in 1:n_regions_debug) {
+  at_ini[i, 1] <- a0_debug
+  bt_ini[i, 1] <- b0_debug
+  for(t in 2:(n_times_debug + 1)) {
+    att_ini[i, t-1] <- w_debug * at_ini[i, t-1]
+    btt_ini[i, t-1] <- w_debug * bt_ini[i, t-1]
+    at_ini[i, t]    <- att_ini[i, t-1] + y_at[i, t-1]
+    
+    prod_val <- sum(x_debug_at[i, t, ] * beta_initial_values)
+    bt_ini[i, t]    <- btt_ini[i, t-1] + E_debug_at[i, t] * epsilon_fixed[i] * exp(prod_val)
+    
+    lambda_at_fwd[i,t-1] <- rgamma(1, shape = at_ini[i, t], rate = bt_ini[i, t])
+    
+    mu_at <- lambda_at_fwd[i, t-1] * exp(prod_val) * epsilon_fixed[i] * E_debug_at[i, t]
+    y_at[i, t] <- rpois(1, mu_at)
+  }
+}
+y_ini_debug <- y_at[,2:21, drop = FALSE]
+
+# --- PASSO 2: DYNAMIC_SAMPLER ---
+dynamic_sampler_debug <- nimbleFunction(
+  contains = sampler_BASE,
+  setup = function(model, mvSaved, target, control) {
+    dims_Y <- dim(model$Y); n_regions <- dims_Y[1]; n_times <- dims_Y[2]
+    p <- dim(model$x)[3]; w <- control$w; a0 <- control$a0; b0 <- control$b0
+    at_buf  <- nimMatrix(nrow = n_regions, ncol = n_times + 1, init = 0, type = 'double')
+    bt_buf  <- nimMatrix(nrow = n_regions, ncol = n_times + 1, init = 0, type = 'double')
+    calcNodes   <- model$getDependencies(target, self = FALSE)
+    targetNodes <- model$expandNodeNames(target)
+    setupOutputs(n_regions, n_times, p, w, a0, b0, at_buf, bt_buf, calcNodes, targetNodes)
+  },
+  run = function() {
+    declare(i, integer()); declare(t, integer()); declare(tt, integer()); declare(k, integer())
+    declare(prod_val, double()); declare(att_t, double()); declare(btt_t, double())
+    declare(shape_tmp, double()); declare(rate_tmp, double()); declare(lambda_futuro, double())
+    declare(nu, double())
+    for(i in 1:n_regions) {
+      at_buf[i, 1] <<- a0; bt_buf[i, 1] <<- b0
+      for(t in 1:n_times) {
+        att_t <- w * at_buf[i, t]; btt_t <- w * bt_buf[i, t]
+        at_buf[i, t+1] <<- att_t + model$Y[i, t]
+        prod_val <- 0
+        for(k in 1:p) { prod_val <- prod_val + model$x[i, t, k] * model$beta_fixos[k] }
+        bt_buf[i, t+1] <<- btt_t + model$E[i, t] * model$epsilon[i] * exp(prod_val)
+      }
+    }
+    for(i in 1:n_regions) {
+      shape_tmp_final <- at_buf[i, n_times + 1]; rate_tmp_final  <- bt_buf[i, n_times + 1]
+      model$lambda[i, n_times] <<- rgamma(1, shape = shape_tmp_final, rate = rate_tmp_final)
+      for(tt in n_times:2) {
+        lambda_futuro <- model$lambda[i, tt]
+        shape_tmp <- (1 - w) * at_buf[i, tt]; rate_tmp  <- bt_buf[i, tt]
+        nu <- rgamma(1, shape = shape_tmp, rate = rate_tmp)
+        model$lambda[i, tt-1] <<- nu + w * lambda_futuro
+      }
+    }
+    model$calculate(calcNodes)
+    copy(from = model, to = mvSaved, row = 1, nodes = targetNodes, logProb = TRUE)
+  },
+  methods = list(reset = function() {})
+)
+
+# --- PASSO 3: CONFIGURAR E EXECUTAR O MODELO COM BETAS FIXOS ---
+cat("\n--- PASSO 3: Configurando e compilando com betas fixos ---\n")
+code_debug <- nimbleCode({
+  for (j in 1:K) { gamma[j] ~ dunif(0, 1) } 
+  for (i in 1:n_regions) { epsilon[i] <- 1 - sum(h[i, 1:K] * gamma[1:K]) }
+  for (i in 1:n_regions) {
+    for(t in 1:n_times){  
+      lambda[i, t] ~ dgamma(1, 1)
+      log_theta[i, t] <- log(lambda[i, t]) + inprod(x[i, t, 1:p], beta_fixos[1:p])
+      theta[i, t] <- exp(log_theta[i, t])
+      mu[i,t] <- E[i, t] * epsilon[i] * theta[i, t]
+      Y[i, t] ~ dpois(mu[i,t])
+    }
+  }
+})
+
+# Adicionar beta_fixos como constante
+constants_debug <- list(
+  n_regions = n_regions_debug, 
+  n_times = n_times_debug, 
+  p = p_debug, 
+  K = K_debug, 
+  h = hAI_debug,
+  beta_fixos = beta_initial_values
+)
+
+data_debug <- list(Y = y_ini_debug, E = E_debug, x = x_debug)
+inits_debug <- list(
+  lambda = matrix(1, nrow = n_regions_debug, ncol = n_times_debug),
+  gamma = c(0.05, 0.10, 0.10, 0.15)
+)
+
+# --- SOLUÇÃO ALTERNATIVA PARA COMPILAÇÃO ---
+cat("\n--- Tentativa de compilação com tratamento de erros ---\n")
+
+try_compile <- function() {
+  tryCatch({
+    # Primeira tentativa: compilação normal
+    model_debug <- nimbleModel(code_debug, constants = constants_debug, 
+                               data = data_debug, inits = inits_debug, check = FALSE)
+    Cmodel_debug <- compileNimble(model_debug)
+    
+    conf_debug <- configureMCMC(Cmodel_debug, nodes = NULL)
+    conf_debug$addSampler(target = "lambda", type = dynamic_sampler_debug, 
+                          control = list(w = w_debug, a0 = a0_debug, b0 = b0_debug))
+    
+    conf_debug$monitors <- c("lambda", "gamma")
+    
+    cat("\nConfiguração do MCMC com betas fixos:\n")
+    conf_debug$printSamplers()
+    
+    Rmcmc_debug <- buildMCMC(conf_debug)
+    Cmcmc_debug <- compileNimble(Rmcmc_debug, project = Cmodel_debug, resetFunctions = TRUE)
+    
+    return(list(success = TRUE, cmcmc = Cmcmc_debug, cmodel = Cmodel_debug))
+    
+  }, error = function(e) {
+    cat("Primeira tentativa falhou:", e$message, "\n")
+    
+    # Segunda tentativa: com reset mais agressivo
+    tryCatch({
+      cat("Tentando abordagem alternativa...\n")
+      nimbleOptions(clearNimbleFunctionsAfterCompiling = TRUE)
+      
+      model_debug <- nimbleModel(code_debug, constants = constants_debug, 
+                                 data = data_debug, inits = inits_debug, check = FALSE,
+                                 name = paste0("model_", as.integer(Sys.time())))
+      
+      Cmodel_debug <- compileNimble(model_debug, 
+                                    dirName = tempdir(),  # Usar diretório temporário
+                                    resetFunctions = TRUE)
+      
+      conf_debug <- configureMCMC(Cmodel_debug, nodes = NULL)
+      conf_debug$addSampler(target = "lambda", type = dynamic_sampler_debug, 
+                            control = list(w = w_debug, a0 = a0_debug, b0 = b0_debug))
+      
+      conf_debug$monitors <- c("lambda", "gamma")
+      
+      Rmcmc_debug <- buildMCMC(conf_debug)
+      Cmcmc_debug <- compileNimble(Rmcmc_debug, project = Cmodel_debug, 
+                                   resetFunctions = TRUE)
+      
+      return(list(success = TRUE, cmcmc = Cmcmc_debug, cmodel = Cmodel_debug))
+      
+    }, error = function(e2) {
+      cat("Segunda tentativa também falhou:", e2$message, "\n")
+      return(list(success = FALSE, error = e2$message))
+    })
+  })
+}
+
+# Executar compilação
+compilation_result <- try_compile()
+
+if (!compilation_result$success) {
+  cat("\n--- TODAS AS TENTATIVAS FALHARAM ---\n")
+  cat("Recomendações:\n")
+  cat("1. Feche e reabra o R/RStudio\n")
+  cat("2. Execute: nimble::clearCompiled()\n") 
+  cat("3. Reinicie a sessão do R\n")
+  stop("Não foi possível compilar o modelo")
+}
+
+Cmcmc_debug <- compilation_result$cmcmc
+Cmodel_debug <- compilation_result$cmodel
+
+cat("\n--- Compilação concluída com sucesso! ---\n")
+
+# --- EXECUÇÃO DO MCMC COM TRATAMENTO DE ERROS ---
+cat("\n--- Executando MCMC por 5000 iterações (reduzido para teste) ---\n")
+
+try_run <- function(cmcmc, niter = 5000, nburnin = 1000) {
+  tryCatch({
+    mcmc.out_compiled <- runMCMC(cmcmc, niter = niter, nburnin = nburnin, 
+                                 nchains = 1, summary = TRUE, samplesAsCodaMCMC = TRUE)
+    return(list(success = TRUE, result = mcmc.out_compiled))
+  }, error = function(e) {
+    cat("Erro na execução do MCMC:", e$message, "\n")
+    
+    # Tentativa com menos iterações
+    tryCatch({
+      cat("Tentando com menos iterações...\n")
+      mcmc.out_compiled <- runMCMC(cmcmc, niter = 2000, nburnin = 500, 
+                                   nchains = 1, summary = TRUE, samplesAsCodaMCMC = TRUE)
+      return(list(success = TRUE, result = mcmc.out_compiled))
+    }, error = function(e2) {
+      return(list(success = FALSE, error = e2$message))
+    })
+  })
+}
+
+run_result <- try_run(Cmcmc_debug, 5000, 1000)
+
+if (!run_result$success) {
+  cat("\nErro final na execução do MCMC:\n", run_result$error, "\n")
+  stop("Execução do MCMC falhou")
+}
+
+mcmc.out_compiled <- run_result$result
+
+cat("\n--- EXECUÇÃO CONCLUÍDA ---\n")
+print("Sumário das amostras:")
+print(mcmc.out_compiled$summary)
+
+# --- PASSO 4: TRACEPLOTS DE LAMBDA COM VALOR REAL ---
+cat("\n--- GERANDO TRACEPLOTS DE LAMBDA COM VALOR REAL ---\n")
+
+# Extrair amostras de lambda
+lambda_samples <- mcmc.out_compiled$samples[, grep("lambda", colnames(mcmc.out_compiled$samples))]
+
+# Criar traceplots para cada lambda
+par(mfrow = c(3, 3))
+for (t in 1:min(9, n_times_debug)) {
+  lambda_name <- paste0("lambda[1,", t, "]")
+  
+  if (lambda_name %in% colnames(lambda_samples)) {
+    plot(lambda_samples[, lambda_name], 
+         type = "l", 
+         main = paste("Traceplot lambda[1,", t, "]"),
+         xlab = "Iteração", 
+         ylab = paste("lambda[1,", t, "]"),
+         col = "blue")
+    
+    # Adicionar linha do valor real
+    abline(h = lambda0_real[t], col = "red", lwd = 2, lty = 2)
+    
+    # Adicionar legenda
+    legend("topright", 
+           legend = c("Amostras MCMC", "Valor Real"), 
+           col = c("blue", "red"), 
+           lty = c(1, 2), 
+           lwd = c(1, 2),
+           bty = "n")
+  }
+}
+
+# Resetar layout gráfico
+par(mfrow = c(1, 1))
+
+# Verificar cobertura dos intervalos de credibilidade
+cat("\n--- VERIFICAÇÃO DE COBERTURA DOS VALORES REAIS ---\n")
+for (t in 1:min(5, n_times_debug)) {  # Mostrar apenas os primeiros 5 para não poluir
+  lambda_col <- paste0("lambda[1,", t, "]")
+  if (lambda_col %in% colnames(lambda_samples)) {
+    lambda_chain <- lambda_samples[, lambda_col]
+    cred_interval <- quantile(lambda_chain, probs = c(0.025, 0.975))
+    covers_true <- lambda0_real[t] >= cred_interval[1] & lambda0_real[t] <= cred_interval[2]
+    
+    cat(paste0("lambda[1,", t, "]: IC95% [", 
+               round(cred_interval[1], 3), ", ", 
+               round(cred_interval[2], 3), "] - ",
+               "Valor real: ", round(lambda0_real[t], 3), " - ",
+               ifelse(covers_true, "COBERTA ✓", "NÃO COBERTA ✗")), "\n")
+  }
+}
+
+# Limpeza final
+cat("\n--- LIMPEZA FINAL ---\n")
+tryCatch({
+  nimble::clearCompiled(Cmodel_debug)
+  nimble::clearCompiled(Cmcmc_debug)
+  gc()
+}, error = function(e) {
+  cat("Aviso na limpeza final:", e$message, "\n")
+})
+
+cat("\n--- SCRIPT FINALIZADO ---\n")

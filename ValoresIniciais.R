@@ -130,8 +130,8 @@ for(t in n_times:2) {
 
 # Os objetos finais 'y_ini' e 'lambda_ini' contêm as trajetórias completas
 # e temporalmente consistentes que serão usadas para iniciar o MCMC.
-y_ini <- y_smooth
-lambda_ini <- lambda_smooth
+y_ini <- y_at[,2:24]
+lambda_ini <- lambda_at_fwd
 
 # Valores iniciais para os priors uniformes de gamma
 a_unif_ini <- c(0.00, rep(0, K - 1))

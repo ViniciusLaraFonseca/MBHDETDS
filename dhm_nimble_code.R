@@ -115,9 +115,9 @@ Cmcmc  <- compileNimble(Rmcmc, project = Cmodel, showCompilerOutput = TRUE)
 #compilar modelo e MCMC sem o dynamic_sampler
 # -------------------------------
 
-conf_test <- configureMCMC(model, monitors = c("beta", "gamma", "lambda", "theta"))
-Rmcmc_test <- buildMCMC(conf_test)
-Cmcmc  <- compileNimble(Rmcmc_test, project = Cmodel, showCompilerOutput = TRUE,resetFunctions=TRUE)
+#conf_test <- configureMCMC(model, monitors = c("beta", "gamma", "lambda", "theta"))
+#Rmcmc_test <- buildMCMC(conf_test)
+#Cmcmc  <- compileNimble(Rmcmc_test, project = Cmodel, showCompilerOutput = TRUE,resetFunctions=TRUE)
 
 # -------------------------------
 # 7️⃣ Rodar MCMC com múltiplas cadeias
