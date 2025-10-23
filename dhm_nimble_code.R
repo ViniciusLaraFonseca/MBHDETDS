@@ -97,7 +97,7 @@ inits_list <- list(inits1, inits2)
 model <- nimbleModel(code, constants = constants, data = data, inits = inits1)
 conf <- configureMCMC(model, monitors = c("beta", "gamma", "lambda", "theta"))
 conf$removeSamplers("lambda")
-conf$addSampler(target = "lambda", type = dynamic_sampler,
+conf$addSampler(target = list("lambda","lambda_suv"), type = dynamic_sampler,
                 control = list(w = 0.9,
                                a0 = constants$a0,
                                b0 = constants$b0))

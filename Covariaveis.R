@@ -5,7 +5,7 @@ if(!require(stringr)){ install.packages("stringr"); require(stringr)}
 if(!require(geobr)){ install.packages("geobr"); require(geobr)} 
 if(!require(RColorBrewer)){ install.packages("RColorBrewer"); require(RColorBrewer)} 
 if(!require(ggplot2)){ install.packages("ggplot2"); require(ggplot2)} 
-if(!require(fda)){ install.packages("fda"); require(fda)} 
+#if(!require(fda)){ install.packages("fda"); require(fda)} 
 if(!require(dplyr)){ install.packages("dplyr"); require(dplyr)}   
 if(!require(maps)){ install.packages("maps"); require(maps)}   # For adding a map to the plots of Brazil
 if(!require(NbClust)){ install.packages("NbClust"); require(NbClust)}   

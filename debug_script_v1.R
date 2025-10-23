@@ -1,3 +1,4 @@
+
 # --- PASSO 0: CARREGAR PACOTES E GARANTIR REPRODUTIBILIDADE ---
 if (!require(nimble)) {
   install.packages("nimble")
@@ -41,25 +42,42 @@ cat("--- PASSO 2: Definindo o amostrador 'dynamic_sampler_debug' com impressões
 dynamic_sampler_debug <- nimbleFunction(
   contains = sampler_BASE,
   setup = function(model, mvSaved, target, control) {
-    dims_Y <- dim(model$Y); n_regions <- dims_Y[1]; n_times <- dims_Y[2]
-    p <- dim(model$x)[3]; w <- control$w; a0 <- control$a0; b0 <- control$b0
+    dims_Y <- dim(model$Y)
+    n_regions <- dims_Y[1]
+    n_times   <- dims_Y[2]
+    p <- dim(model$x)[3]
+    w  <- control$w
+    a0 <- control$a0
+    b0 <- control$b0
+    
     at_buf  <- nimMatrix(nrow = n_regions, ncol = n_times + 1, init = 0, type = 'double')
     bt_buf  <- nimMatrix(nrow = n_regions, ncol = n_times + 1, init = 0, type = 'double')
+    
     calcNodes   <- model$getDependencies(target, self = FALSE)
     targetNodes <- model$expandNodeNames(target)
+    
     setupOutputs(n_regions, n_times, p, w, a0, b0, at_buf, bt_buf, calcNodes, targetNodes)
   },
   run = function() {
-    declare(i, integer()); declare(t, integer()); declare(tt, integer()); declare(k, integer())
-    declare(prod_val, double()); declare(att_t, double()); declare(btt_t, double())
-    declare(shape_tmp, double()); declare(rate_tmp, double()); declare(lambda_futuro, double())
+    declare(i, integer())
+    declare(t, integer())
+    declare(tt, integer())
+    declare(k, integer())
+    declare(prod_val, double())
+    declare(att_t, double())
+    declare(btt_t, double())
+    declare(shape_tmp, double())
+    declare(rate_tmp, double())
+    declare(lambda_futuro, double())
     declare(nu, double())
     
     for(i in 1:n_regions) {
       at_buf[i, 1] <<- a0
       bt_buf[i, 1] <<- b0
       
-      print(paste0("--- INICIANDO FORWARD FILTERING (ITERAÇÃO MCMC) PARA REGIÃO ", i, " ---"))
+      print("=== INICIANDO FORWARD FILTERING ===")
+      print("Região:")
+      print(i)
       
       for(t in 1:n_times) {
         att_t <- w * at_buf[i, t]
@@ -74,35 +92,48 @@ dynamic_sampler_debug <- nimbleFunction(
         
         bt_buf[i, t+1] <<- btt_t + model$E[i, t] * model$epsilon[i] * exp(prod_val)
         
-        print(paste0("Forward, t=", t, ": at_post=", round(at_buf[i, t+1], 4), ", bt_post=", round(bt_buf[i, t+1], 4)))
+        print("Forward t=")
+        print(t)
+        print("at_post=")
+        print(at_buf[i, t+1])
+        print("bt_post=")
+        print(bt_buf[i, t+1])
       }
     }
     
     for(i in 1:n_regions) {
-      print(paste0("--- INICIANDO BACKWARD SAMPLING (ITERAÇÃO MCMC) PARA REGIÃO ", i, " ---"))
+      print("=== INICIANDO BACKWARD SAMPLING ===")
+      print("Região:")
+      print(i)
       
       shape_tmp_final <- at_buf[i, n_times + 1]
       rate_tmp_final  <- bt_buf[i, n_times + 1]
       model$lambda[i, n_times] <<- rgamma(1, shape = shape_tmp_final, rate = rate_tmp_final)
-      print(paste0("Backward, t=", n_times, ": lambda=", round(model$lambda[i, n_times], 6), 
-                   " (de Gamma(shape=", round(shape_tmp_final, 4), ", rate=", round(rate_tmp_final, 4), "))"))
       
-      for(tt in n_times:2) { 
+      print("Backward t=")
+      print(n_times)
+      print("lambda=")
+      print(model$lambda[i, n_times])
+      
+      for(tt in n_times:2) {
         lambda_futuro <- model$lambda[i, tt]
         
-        shape_tmp <- (1 - w) * at_buf[i, tt] 
+        shape_tmp <- (1 - w) * at_buf[i, tt]
         rate_tmp  <- bt_buf[i, tt]
         
         if(shape_tmp <= 0 | rate_tmp <= 0) {
-          print(paste0("!!! ERRO: Parâmetros da Gamma inválidos em t=", tt-1, "!!!"))
+          print("!!! ERRO: parâmetros inválidos da Gamma !!!")
         }
         
         nu <- rgamma(1, shape = shape_tmp, rate = rate_tmp)
         model$lambda[i, tt-1] <<- nu + w * lambda_futuro
         
-        print(paste0("Backward, t=", tt-1, ": nu=", format(nu, scientific = TRUE, digits = 4), 
-                     " (de Gamma(shape=", round(shape_tmp, 4), ", rate=", round(rate_tmp, 4), "))",
-                     " | lambda=", round(model$lambda[i, tt-1], 6)))
+        print("Backward t=")
+        print(tt-1)
+        print("nu=")
+        print(nu)
+        print("lambda=")
+        print(model$lambda[i, tt-1])
       }
     }
     
@@ -136,7 +167,7 @@ model_debug <- nimbleModel(code_debug, constants = constants_debug, data = data_
 
 conf_debug <- configureMCMC(model_debug, nodes = NULL)
 conf_debug$addSampler(target = "lambda", type = dynamic_sampler_debug, control = list(w = w_debug, a0 = a0_debug, b0 = b0_debug))
-conf_debug$addSampler(target = "beta", type = "RW_block", control = list(adaptInterval = 200))
+#conf_debug$addSampler(target = "beta", type = "RW_block", control = list(adaptInterval = 200))
 conf_debug$monitors <- c("lambda", "beta")
 
 # Construir a versão R do MCMC (não compilada)

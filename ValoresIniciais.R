@@ -142,7 +142,3 @@ E <- E_escalonado
 
 cat("Geração de valores iniciais concluída com sucesso.\n")
 
-# Limpeza de objetos intermédios (opcional)
-rm(E_escalonado, glm_fit, lambda0_log, mu_lambda0, var_lambda0, a0, b0,
-   epsilon_ini, lambda_at_fwd, y_at, att_ini, btt_ini, at_ini, bt_ini,
-   lambda_smooth, y_smooth, prod_val_vec, mu_smooth, media_global_E)
