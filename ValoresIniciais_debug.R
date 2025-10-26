@@ -19,7 +19,7 @@ p         <- 3 # Número de covariáveis beta
 K         <- 4 # Número de clusters gamma
 
 # Parâmetros "Verdadeiros" para Simulação
-beta_true  <- c(-0.25, 0.5, -0.1) # Exemplo de valores verdadeiros
+beta_true  <- c(1, -1, -0.5) # Exemplo de valores verdadeiros
 gamma_true <- c(0.05, 0.10, 0.10, 0.15)
 w_true     <- 0.9
 a0_true    <- 1 # Exemplo: um pouco mais informativo que 1
