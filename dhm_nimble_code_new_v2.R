@@ -15,12 +15,12 @@ cat("--- PASSO 1: Carregando dados e valores iniciais ---\n")
 # (Certifique-se que a linha com 'require(fda)' em Covariaveis.R está comentada)
 source("_dataCaseStudy.r")
 attach(data)
-source("Covariaveis.R")
+#source("Covariaveis.R")
 source("ValoresIniciais_debug.R")
 # Guardar os valores "verdadeiros" da simulação para plotar
 lambda_verdadeiro <- lambda_ini
 beta_verdadeiro <- beta_ini
-gamma_verdadeiro <- gamma_ini
+gamma_verdadeiro <- gamma_true
 
 # --- PASSO 2: DEFINIR O MODELO ESTILO v8 ---
 cat("--- PASSO 2: Definindo o modelo estilo v8 ---\n")
@@ -48,7 +48,7 @@ code_v8_style <- nimbleCode({
       at[i, t] <- att[i, t-1] + Y[i, t-1]
       bt[i, t] <- btt[i, t-1] + E[i, t-1] * epsilon[i] * exp(inprod(beta[1:p], x[i, t-1, 1:p]))
       #DISTRIBUIÇÃO TERMO DE INOVAÇÃO (IMPORTANTE PRO PASSO BACKWARD)
-      nu[i,t-1] ~dgamma((1-w)at[i,t-1],bt[i,t-1])
+      nu[i,t-1] ~ dgamma((1-w)*at[i, t-1],bt[i, t-1])
     }
     #PREDITIVA PRIORI DO LAMBDA 
     for (t in 1:n_times) {
@@ -61,7 +61,7 @@ code_v8_style <- nimbleCode({
     }
     #AGORA COM TODAS AS PEÇAS, VAMOS PARA A VEROSSIMILHANÇA
     for (t in 1:n_times) {
-      mu[i,t] <- E[i, t] * epsilon[i] * lambda_suv[i, t] * exp(inprod(beta[1:p], x[i, t, 1:p]))
+      mu[i,t] <- E[i, t] * epsilon[i] * lambda[i, t] * exp(inprod(beta[1:p], x[i, t, 1:p]))
       Y[i, t] ~ dpois(mu[i,t])
     }
   }
@@ -76,8 +76,8 @@ constants_full <- list(n_regions = n_regions, n_times = n_times, p = p_params, K
 data_full <- list(Y = Y, E = E, x = x)
 
 # Valores iniciais para duas cadeias
-inits1 <- list(lambda = lambda_ini, beta = beta_ini, gamma = gamma_ini)
-inits2 <- list(lambda = matrix(1, n_regions, n_times), beta = rnorm(p_params, 0, 0.5), gamma = gamma_ini / 2)
+inits1 <- list(lambda = lambda_ini, beta = beta_ini, gamma = gamma_true)
+inits2 <- list(lambda = matrix(1, n_regions, n_times), beta = rnorm(p_params, 0, 0.5), gamma = gamma_true / 2)
 inits_list <- list(inits1, inits2)
 
 # Construir e compilar o modelo
@@ -85,23 +85,28 @@ model_v8 <- nimbleModel(code_v8_style, constants = constants_full, data = data_f
 Cmodel_v8 <- compileNimble(model_v8)
 
 # Configurar MCMC (NIMBLE usará seus amostradores padrão, o que é o objetivo do teste)
-conf_v8 <- configureMCMC(Cmodel_v8, monitors = c("lambda", "beta", "gamma","lambda_suv","nu"))
+# configureMCMC deve receber o nimbleModel não compilado
+conf_v8 <- configureMCMC(model_v8, monitors = c("lambda", "beta", "gamma", "lambda_suv", "nu"))
 Rmcmc_v8 <- buildMCMC(conf_v8)
+
+# compilar o modelo, depois compilar o MCMC usando o projeto do modelo compilado
+Cmodel_v8 <- compileNimble(model_v8)    # se já tiver, ok; senão recompilar aqui
 Cmcmc_v8 <- compileNimble(Rmcmc_v8, project = Cmodel_v8)
 
 # Executar o MCMC com 2 cadeias
 cat("\n--- Executando MCMC com 2 cadeias (pode demorar alguns minutos) ---\n")
-samples <- runMCMC(Cmcmc_v8, niter = 5000, nburnin = 1000, nchains = 2, inits = inits_list, samplesAsCodaMCMC = TRUE)
+samples <- runMCMC(Cmcmc_v8, niter = 50000, nburnin = 0, nchains = 2, inits = inits_list, samplesAsCodaMCMC = TRUE,summary = TRUE)
 
 # --- PASSO 4: GERAR E SALVAR OS TRACEPLOTS ---
 cat("\n--- PASSO 4: Gerando e salvando os traceplots ---\n")
 
 # Converter para um formato mais fácil de plotar com ggplot
-samples_df <- do.call(rbind, lapply(1:length(samples), function(i) {
-  df <- as.data.frame(samples[[i]])
-  df$chain <- as.factor(i)
-  df$iter <- 1:nrow(df)
-  return(df)
+samples_df <- do.call(rbind, lapply(1:length(samples$samples), function(i_chain) {
+  chain_mcmc <- samples$samples[[i_chain]]
+  df_chain <- as.data.frame(as.matrix(chain_mcmc))
+  df_chain$iter <- 1:nrow(df_chain)
+  df_chain$chain <- factor(paste0("chain", i_chain))
+  return(df_chain)
 }))
 
 # Função para criar e salvar traceplots
@@ -141,4 +146,11 @@ for(lam_name in selected_lambdas) {
   save_traceplot(samples_df, lam_name, true_val)
 }
 
+selected_lambdas_suv <- c("lambda_suv[1, 1]", "lambda_suv[1, 10]", "lambda_suv[1, 23]")
+for(lam_name in selected_lambdas_suv) {
+  # Extrair os índices para obter o valor verdadeiro
+  indices <- as.numeric(unlist(regmatches(lam_name, gregexpr("[0-9]+", lam_name))))
+  true_val <- lambda_verdadeiro[indices[1], indices[2]]
+  save_traceplot(samples_df, lam_name, true_val)
+}
 cat("\n--- Análise concluída. Verifique os ficheiros .png no seu diretório. ---\n")

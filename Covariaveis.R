@@ -218,7 +218,4 @@ row.names(E) <- Grouped_total_MG$MICRO_
 area = unique(cod_micro$MICRO_)
 tempo = unique(total$Ano)
 
-#padronizando as covariáveis
-x[,,1] <-scale(x[,,1])
-x[,,2] <-scale(x[,,2])
-x[,,3] <-scale(x[,,3])
+

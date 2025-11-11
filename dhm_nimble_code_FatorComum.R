@@ -1,0 +1,202 @@
+# Nome: dhm_nimble_code_FatorComum.R
+# Objetivo: Implementar o modelo com fator dinâmico comum univariado (lambda_t)
+#           com a lógica de filtragem "forward-only" dentro do nimbleCode.
+
+# (Presume-se que o script de simulação acima já foi executado e os objetos
+#  constants_nimble, data_nimble, e inits_list_nimble estão no ambiente)
+
+library(nimble)
+library(coda)
+library(ggplot2)
+
+source("_dataCaseStudy.r")
+attach(data)
+source("ValoresIniciais_FatorComum.R")
+source("ffbs_sampler_FatorComum.R")
+cat("--- Definindo o nimbleCode (Fator Comum) ---\n")
+
+code_fator_comum <- nimbleCode({
+  
+  ############################################################
+  # 1. PRIORS
+  ############################################################
+  
+  # Priori para beta
+  for (j in 1:p) {
+    beta[j] ~ dnorm(mu_beta[j], sd = 5)
+  }
+  
+  # Prior informativa para gamma[1]
+  gamma[1] ~ dunif(a_unif[1], b_unif[1])
+  
+  # Priori sequencial para os demais gammas
+  for (j in 2:K) {
+    gamma[j] ~ dunif(
+      min = a_unif[j] * (1 - sum(gamma[1:(j - 1)])),
+      max = b_unif[j] * (1 - sum(gamma[1:(j - 1)]))
+    )
+  }
+  
+  # epsilon[i] fixo pela mistura espacial
+  for (i in 1:n_regions) {
+    epsilon[i] <- 1 - sum(h[i, 1:K] * gamma[1:K])
+  }
+  
+  
+  ############################################################
+  # 2. COMPONENTE ESPACIAL: g_it = E_it * epsilon_i * exp(x_it β)
+  ############################################################
+  
+  for (i in 1:n_regions) {
+    for (t in 1:n_times) {
+      
+      # x_it' beta
+      log_g_it[i, t] <- inprod(beta[1:p], x[i, t, 1:p])
+      
+      # E_it * epsilon_i * exp(x_it beta)
+      g_it[i, t] <- E[i, t] * epsilon[i] * exp(log_g_it[i, t])
+    }
+  }
+  
+  
+  ############################################################
+  # 3. FILTRO FORWARD (UNIVARIADO) PARA λ_t
+  ############################################################
+  
+  at[1] <- a0
+  bt[1] <- b0
+  
+  for (t in 2:(n_times + 1)) {
+    
+    ## PREDIÇÃO
+    att[t - 1] <- w * at[t - 1]
+    btt[t - 1] <- w * bt[t - 1]
+    
+    ## AGREGAÇÃO — agora com índices completamente explícitos
+    sum_Y[t - 1] <- sum(Y[1:n_regions, t - 1])
+    sum_g[t - 1] <- sum(g_it[1:n_regions, t - 1])
+    
+    ## ATUALIZAÇÃO
+    at[t] <- att[t - 1] + sum_Y[t - 1]
+    bt[t] <- btt[t - 1] + sum_g[t - 1]
+  }
+  
+  
+  ############################################################
+  # 4. PRIORS PREDITIVAS + VEROSSIMILHANÇA
+  ############################################################
+  
+  for (t in 1:n_times) {
+    
+    # Prior preditiva do fator comum
+    lambda[t] ~ dgamma(att[t], rate = btt[t])
+    
+    # Verossimilhança
+    for (i in 1:n_regions) {
+      mu[i, t] <- lambda[t] * g_it[i, t]
+      Y[i, t] ~ dpois(mu[i, t])
+    }
+  }
+  
+})
+
+
+# --- PASSO 3: CONFIGURAR E EXECUTAR O MCMC ---
+cat("\n--- PASSO 3: Configurando e executando o MCMC (Fator Comum) ---\n")
+
+# Construir e compilar o modelo
+model_fc <- nimbleModel(
+  code_fator_comum,
+  constants = constants_nimble,
+  data = data_nimble,
+  inits = inits_nimble_cadeia2,
+  check = FALSE,
+  dimensions = list(
+    g_it     = c(n_regions, n_times),
+    log_g_it = c(n_regions, n_times),
+    mu       = c(n_regions, n_times),
+    Y        = c(n_regions, n_times),
+    x        = c(n_regions, n_times, p),
+    epsilon  = n_regions,
+    beta     = p,
+    gamma    = K,
+    lambda   = n_times,
+    at       = n_times + 1,
+    bt       = n_times + 1,
+    att      = n_times,
+    btt      = n_times,
+    sum_Y    = n_times,
+    sum_g    = n_times
+  )
+)
+
+cat("Compilando modelo...\n")
+Cmodel_fc <- compileNimble(model_fc)
+
+# Configurar MCMC (NIMBLE usará seus amostradores padrão)
+# Agora NÃO precisamos de um sampler customizado, pois a lógica FFBS
+# está declarada diretamente no modelo (como no seu script v8)
+conf_fc <- configureMCMC(Cmodel_fc, monitors = c("lambda", "beta", "gamma"))
+
+Rmcmc_fc <- buildMCMC(conf_fc)
+cat("Compilando MCMC...\n")
+Cmcmc_fc <- compileNimble(Rmcmc_fc, project = Cmodel_fc)
+
+# Executar o MCMC com 2 cadeias
+cat("\n--- Executando MCMC com 2 cadeias (pode demorar) ---\n")
+samples_fc <- runMCMC(Cmcmc_fc, 
+                      niter = 50000, 
+                      nburnin = 0, 
+                      nchains = 2, 
+                      inits = inits_list_nimble, 
+                      samplesAsCodaMCMC = TRUE)
+
+# --- PASSO 4: GERAR E SALVAR OS TRACEPLOTS ---
+cat("\n--- PASSO 4: Gerando e salvando os traceplots ---\n")
+
+# Converter para um formato mais fácil de plotar com ggplot
+samples_df_fc <- do.call(rbind, lapply(1:length(samples_fc), function(i) {
+  df <- as.data.frame(samples_fc[[i]])
+  df$chain <- as.factor(i)
+  df$iter <- 1:nrow(df)
+  return(df)
+}))
+
+# Função para criar e salvar traceplots
+save_traceplot <- function(df, param_name, true_value) {
+  p <- ggplot(df, aes_string(x = "iter", y = paste0("`", param_name, "`"), color = "chain")) +
+    geom_line(alpha = 0.7) +
+    geom_hline(yintercept = true_value, color = "blue", linetype = "dashed", size = 1) +
+    labs(title = paste("Traceplot for", param_name),
+         subtitle = paste("Blue dashed line = True simulated value (", round(true_value, 3), ")"),
+         x = "Iteration", y = "Value") +
+    theme_minimal() +
+    scale_color_manual(values = c("black", "red"))
+  
+  filename <- paste0("traceplot_FatorComum_FFBS_nimbleSampler_", gsub("\\[|, |\\]", "_", param_name), ".png")
+  ggsave(filename, p, width = 8, height = 4)
+  cat(paste("Salvo:", filename, "\n"))
+}
+
+# Gerar plots para beta
+for(i in 1:p) {
+  param <- paste0("beta[", i, "]")
+  save_traceplot(samples_df_fc, param, beta_true[i])
+}
+
+# Gerar plots para gamma
+for(i in 1:K) {
+  param <- paste0("gamma[", i, "]")
+  save_traceplot(samples_df_fc, param, gamma_true[i])
+}
+
+# Gerar plots para lambdas selecionados
+selected_lambdas <- c("lambda[1]", "lambda[10]", "lambda[23]")
+for(lam_name in selected_lambdas) {
+  # Extrair os índices
+  indices <- as.numeric(unlist(regmatches(lam_name, gregexpr("[0-9]+", lam_name))))
+  true_val <- lambda_true[indices[1]]
+  save_traceplot(samples_df_fc, lam_name, true_val)
+}
+
+cat("\n--- Análise (Fator Comum) concluída. ---\n")

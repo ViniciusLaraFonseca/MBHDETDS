@@ -19,7 +19,7 @@ p         <- 3 # Número de covariáveis beta
 K         <- 4 # Número de clusters gamma
 
 # Parâmetros "Verdadeiros" para Simulação
-beta_true  <- c(-0.25, 0.5, -0.1) # Exemplo de valores verdadeiros
+beta_true  <- c(-1, 1, 0.5) # Exemplo de valores verdadeiros
 gamma_true <- c(0.05, 0.10, 0.10, 0.15)
 w_true     <- 0.9
 a0_true    <- 1 # Exemplo: um pouco mais informativo que 1
@@ -33,7 +33,7 @@ cat("--- PASSO 2: Simulando dados controlados (Y, E, x) ---\n")
 x <- array(rnorm(n_regions * n_times * p), dim = c(n_regions, n_times, p))
 
 # Simular e Normalizar Offset 'E'
-E_raw <- matrix(runif(n_regions * n_times, 150, 250), nrow = n_regions) # Valores plausíveis
+E_raw <- matrix(runif(n_regions * n_times, 100, 200), nrow = n_regions) # Valores plausíveis
 media_global_E_sim <- mean(E_raw)
 E_debug <- E_raw #/ media_global_E_sim # Normalizado para média 1
 cat("Offset 'E' simulado e normalizado (média 1).\n")
@@ -79,7 +79,7 @@ for(i in 1:n_regions) {
     prod_val <- sum(x[i, t-1, ] * beta_true)
     bt_ini[i, t]    <- btt_ini[i, t-1] + E_debug[i, t-1] * epsilon_ini[i] * exp(prod_val)
     
-    # Amostra um valor de lambda a partir da distribuição filtrada (forward)
+    # Amostra um valor de lambda a partir da distribuição filtrada (forward) TEOREMA 1.2(update or on-line posterior distribution)
     lambda_at_fwd[i, t-1] <- rgamma(1, shape = at_ini[i, t], rate = bt_ini[i, t])
     
     # Simula um novo valor de Y para alimentar o próximo passo do filtro
